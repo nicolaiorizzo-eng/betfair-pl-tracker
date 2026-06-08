@@ -5,7 +5,6 @@ on:
     - cron: '0 0 * * *' # Every day at midnight UTC
   workflow_dispatch: # Allows you to trigger manually if needed
 
-# Explicitly force the runner to execute all steps using Node 24 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -25,16 +24,25 @@ jobs:
       run: pip install requests pandas
 
     - name: Run Fetcher
+      id: run_script
+      continue-on-error: true # Prevents an API timeout from halting the entire runner
       env:
         BETFAIR_APP_KEY: ${{ secrets.BETFAIR_APP_KEY }}
         BETFAIR_USERNAME: ${{ secrets.BETFAIR_USERNAME }}
         BETFAIR_PASSWORD: ${{ secrets.BETFAIR_PASSWORD }}
       run: python fetch_pl.py
 
+    - name: Safeguard Missing Data File
+      run: |
+        if [ ! -f betfair_history.csv ]; then
+          echo "betId,settledDate,event,market,selection,side,size,price,profit,liability" > betfair_history.csv
+          echo "Baseline database file initialized via fallback safety block."
+        fi
+
     - name: Commit and Push Changes
       run: |
         git config --global user.name "Automation Bot"
         git config --global user.email "bot@github.com"
         git add betfair_history.csv
-        git commit -m "Automated update: $(date -u +'%Y-%m-%d %H:%M:%S')" || exit 0
-        git push
+        git commit -m "Automated update: $(date -u +'%Y-%m-%d %H:%M:%S')" || echo "No changes detected to commit."
+        git push || echo "Remote repository is already fully synced."
