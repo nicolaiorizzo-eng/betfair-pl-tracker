@@ -5,15 +5,19 @@ on:
     - cron: '0 0 * * *' # Every day at midnight UTC
   workflow_dispatch: # Allows you to trigger manually if needed
 
+# Explicitly force the runner to execute all steps using Node 24 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   update-tracker:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Repo
-      uses: actions/checkout@v6 # Upgraded to v6 for modern platform execution
+      uses: actions/checkout@v6
 
     - name: Set up Python
-      uses: actions/setup-python@v5 # Upgraded to v5
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
