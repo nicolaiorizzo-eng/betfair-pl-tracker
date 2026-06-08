@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Repo
-      uses: actions/checkout@v4 # Updated from v3 to support newer Node runtimes
+      uses: actions/checkout@v6 # Upgraded to v6 for modern platform execution
 
     - name: Set up Python
-      uses: actions/setup-python@v5 # Updated from v4 to support newer Node runtimes
+      uses: actions/setup-python@v5 # Upgraded to v5
       with:
         python-version: '3.10'
 
