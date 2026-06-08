@@ -5,7 +5,6 @@ import requests
 from datetime import datetime, timedelta
 
 # --- Configuration & Environment Variables ---
-# In GitHub, you save these securely under Settings -> Secrets and variables -> Actions
 BETFAIR_APP_KEY = os.environ.get("BETFAIR_APP_KEY")
 BETFAIR_USERNAME = os.environ.get("BETFAIR_USERNAME")
 BETFAIR_PASSWORD = os.environ.get("BETFAIR_PASSWORD")
@@ -23,15 +22,11 @@ def get_session_token():
     
     try:
         response = requests.post(url, headers=headers)
-        
         if response.status_code != 200:
             print(f"Login HTTP Error: {response.status_code}")
-            print(f"Response snippet: {response.text[:300]}")
             return None
             
         res_json = response.json()
-        
-        # Check if Betfair's internal status flag indicates a login failure
         if res_json.get("status") == "FAIL":
             print(f"Betfair Login Rejected: {res_json.get('error')}")
             return None
@@ -42,7 +37,7 @@ def get_session_token():
         return None
 
 def fetch_cleared_orders(session_token):
-    """Fetches settled bets from the last 2 days to ensure no data gaps."""
+    """Fetches settled bets. Looks back 30 days to catch historical data on initial run."""
     url = "https://api.betfair.com/exchange/betting/rest/v1.0/listClearedOrders/"
     headers = {
         'X-Application': BETFAIR_APP_KEY,
@@ -50,7 +45,11 @@ def fetch_cleared_orders(session_token):
         'content-type': 'application/json'
     }
     
-    from_date = (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%dT00:00:00Z")
+    # Check if we already have data; if not, go back 30 days to build the baseline database
+    lookback_days = 2 if os.path.exists(DATA_FILE) else 30
+    from_date = (datetime.utcnow() - timedelta(days=lookback_days)).strftime("%Y-%m-%dT00:00:00Z")
+    
+    print(f"Fetching cleared orders from: {from_date}")
     
     payload = {
         "betStatus": "SETTLED",
@@ -63,7 +62,6 @@ def fetch_cleared_orders(session_token):
         response = requests.post(url, data=json.dumps(payload), headers=headers)
         if response.status_code != 200:
             print(f"Failed to fetch cleared orders. HTTP Status: {response.status_code}")
-            print(f"Response: {response.text[:300]}")
             return []
         return response.json().get("clearedOrders", [])
     except Exception as e:
@@ -73,30 +71,25 @@ def fetch_cleared_orders(session_token):
 def process_and_save():
     token = get_session_token()
     if not token:
-        print("Authentication step failed. Exiting script execution.")
+        print("Authentication failed.")
         return
         
     orders = fetch_cleared_orders(token)
-    if not orders:
-        print("No new settled orders returned by the Betfair API.")
-        return
-
     parsed_records = []
+
     for order in orders:
         desc = order.get("itemDescription", {})
-        
         profit = order.get("profit", 0.0)
         size = order.get("sizeSettled", 0.0)
         price = order.get("priceRequested", 1.0)
         side = order.get("side")
         
-        # Calculate liability dynamically based on market exposure rules
         # Lay Liability = Stake * (Odds - 1) | Back Liability = Stake
         liability = size * (price - 1.0) if side == "LAY" else size
         
         record = {
             "betId": order.get("betId"),
-            "settledDate": order.get("placedDate")[:10],  # Isolates YYYY-MM-DD
+            "settledDate": order.get("placedDate")[:10],
             "event": desc.get("eventName", "Unknown Event"),
             "market": desc.get("marketName", "Unknown Market"),
             "selection": desc.get("runnerName", "Unknown Selection"),
@@ -110,10 +103,17 @@ def process_and_save():
         
     new_df = pd.DataFrame(parsed_records)
 
-    # Seamlessly merge new batches into historical tracking log without breaking references
+    # Core Safety Guard: If no orders are found and no baseline file exists, 
+    # we initialize a blank DataFrame structure so Git never errors out out again.
+    if new_df.empty and not os.path.exists(DATA_FILE):
+        new_df = pd.DataFrame(columns=["betId", "settledDate", "event", "market", "selection", "side", "size", "price", "profit", "liability"])
+
     if os.path.exists(DATA_FILE):
         existing_df = pd.read_csv(DATA_FILE)
-        combined_df = pd.concat([existing_df, new_df]).drop_duplicates(subset=['betId'], keep='last')
+        if not new_df.empty:
+            combined_df = pd.concat([existing_df, new_df]).drop_duplicates(subset=['betId'], keep='last')
+        else:
+            combined_df = existing_df
     else:
         combined_df = new_df
 
